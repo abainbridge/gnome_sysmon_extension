@@ -1,6 +1,8 @@
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
+import Pango from 'gi://Pango';
+import PangoCairo from 'gi://PangoCairo';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
@@ -14,21 +16,7 @@ export default class SimpleCpuExtension extends Extension {
         this._prevTotal = 0;
         this._dataPoints = new Array(10).fill(0);
 
-        // Horizontal container box
-        const box = new St.BoxLayout({
-            vertical: false,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-
-        // 1. Text Label
-        this._label = new St.Label({
-            text: 'cpu',
-            y_align: Clutter.ActorAlign.CENTER,
-            style: 'margin-right: 6px;',
-        });
-        box.add_child(this._label);
-
-        // 2. Line Graph Canvas (48x32)
+        // Line Graph Canvas (48x32)
         this._drawingArea = new St.DrawingArea({
             width: 48,
             height: 32,
@@ -40,11 +28,31 @@ export default class SimpleCpuExtension extends Extension {
             const [width, height] = area.get_surface_size();
 
             // 1. Fill background
-            cr.setSourceRGB(0.10, 0.18, 0.28);
+            cr.setSourceRGB(0.13, 0.28, 0.38);
             cr.rectangle(0, 0, width, height);
             cr.fill();
 
-            // 2. Draw line graph on top
+            // 2. Render "cpu" text near top edge with squashed height aspect ratio
+            cr.save();
+            const layout = PangoCairo.create_layout(cr);
+            layout.set_text('cpu', -1);
+
+            // Smaller font size to keep text compact
+            const fontDesc = Pango.FontDescription.from_string('Sans 12');
+            layout.set_font_description(fontDesc);
+
+            cr.setSourceRGBA(1.0, 1.0, 1.0, 0.4);
+
+            // Translate position near top edge (X: 3px, Y: 1px)
+            cr.translate(3, -2);
+
+            // Scale vertical axis by 0.75 to make text less tall and wider in proportion
+            cr.scale(1.0, 0.85);
+
+            PangoCairo.show_layout(cr, layout);
+            cr.restore(); // Restore scale transform so line graph geometry isn't skewed
+
+            // 3. Draw line graph on top of text
             const points = this._dataPoints;
             const count = points.length;
 
@@ -73,12 +81,11 @@ export default class SimpleCpuExtension extends Extension {
             cr.$dispose();
         });
 
-        box.add_child(this._drawingArea);
-        this._indicator.add_child(box);
+        this._indicator.add_child(this._drawingArea);
 
         Main.panel.addToStatusArea(this.uuid, this._indicator);
 
-        // Prime the initial read so the first delta calculation has baseline data
+        // Prime initial read
         this._updateCpuUsage();
 
         // 1-second polling timer
@@ -90,16 +97,14 @@ export default class SimpleCpuExtension extends Extension {
 
     _getCpuStats() {
         try {
-            // Read raw text from /proc/stat
             const [success, contents] = GLib.file_get_contents('/proc/stat');
             if (!success) return null;
 
             const text = new TextDecoder().decode(contents);
-            const firstLine = text.split('\n')[0]; // "cpu  user nice system idle iowait..."
+            const firstLine = text.split('\n')[0];
             const parts = firstLine.trim().split(/\s+/).slice(1).map(Number);
 
-            // parts: [user, nice, system, idle, iowait, irq, softirq, steal]
-            const idle = parts[3] + (parts[4] || 0); // idle + iowait
+            const idle = parts[3] + (parts[4] || 0);
             const total = parts.reduce((acc, val) => acc + val, 0);
 
             return { idle, total };
@@ -120,10 +125,6 @@ export default class SimpleCpuExtension extends Extension {
             if (deltaTotal > 0) {
                 const usage = Math.round(((deltaTotal - deltaIdle) / deltaTotal) * 100);
 
-                // Update text label
-                this._label.set_text(`cpu`);
-
-                // Shift buffer and queue canvas redraw
                 this._dataPoints.shift();
                 this._dataPoints.push(usage);
                 this._drawingArea.queue_repaint();
@@ -135,7 +136,6 @@ export default class SimpleCpuExtension extends Extension {
     }
 
     disable() {
-        // Clean up GLib timeout source
         if (this._timeoutId) {
             GLib.Source.remove(this._timeoutId);
             this._timeoutId = null;
@@ -146,8 +146,6 @@ export default class SimpleCpuExtension extends Extension {
             this._indicator = null;
         }
 
-        this._label = null;
         this._drawingArea = null;
     }
 }
-
