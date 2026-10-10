@@ -1,7 +1,6 @@
 {
-  "uuid": "simple-cpu@example.com",
-  "name": "Simple CPU Indicator",
-  "description": "Displays static CPU text in the top bar",
+  "uuid": "gnome-sysmon-extension@example.com",
+  "name": "Simple System Monitor",
+  "description": "Displays system load in the top bar",
   "shell-version": [ "45", "46", "47" ]
 }
-

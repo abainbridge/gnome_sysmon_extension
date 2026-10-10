@@ -7,7 +7,7 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 
-export default class SimpleCpuNetFilesExtension extends Extension {
+export default class GnomeSysmonExtension extends Extension {
     enable() {
         this._indicator = new PanelMenu.Button(0.0, this.metadata.name, false);
 
