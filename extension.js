@@ -21,7 +21,7 @@ export default class SimpleCpuNetFilesExtension extends Extension {
         // --- CPU State & Setup ---
         this._prevIdle = 0;
         this._prevTotal = 0;
-        this._cpuDataPoints = new Array(10).fill(0);
+        this._cpuDataPoints = new Array(20).fill(0);
 
         this._cpuDrawingArea = new St.DrawingArea({
             width: 48,
@@ -34,8 +34,8 @@ export default class SimpleCpuNetFilesExtension extends Extension {
         this._prevRxBytes = 0;
         this._prevTxBytes = 0;
         this._prevNetTime = 0;
-        this._rxDataPoints = new Array(10).fill(0);
-        this._txDataPoints = new Array(10).fill(0);
+        this._rxDataPoints = new Array(20).fill(0);
+        this._txDataPoints = new Array(20).fill(0);
 
         this._netDrawingArea = new St.DrawingArea({
             width: 48,
@@ -48,8 +48,8 @@ export default class SimpleCpuNetFilesExtension extends Extension {
         this._prevReadBytes = 0;
         this._prevWriteBytes = 0;
         this._prevIoTime = 0;
-        this._readDataPoints = new Array(10).fill(0);
-        this._writeDataPoints = new Array(10).fill(0);
+        this._readDataPoints = new Array(20).fill(0);
+        this._writeDataPoints = new Array(20).fill(0);
 
         this._filesDrawingArea = new St.DrawingArea({
             width: 48,
@@ -367,3 +367,4 @@ export default class SimpleCpuNetFilesExtension extends Extension {
         this._box = null;
     }
 }
+
