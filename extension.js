@@ -7,11 +7,11 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 
-export default class SimpleCpuNetExtension extends Extension {
+export default class SimpleCpuNetFilesExtension extends Extension {
     enable() {
         this._indicator = new PanelMenu.Button(0.0, this.metadata.name, false);
 
-        // Container box to hold CPU and NET graphs side-by-side
+        // Container box to hold CPU, NET, and FILES graphs side-by-side
         this._box = new St.BoxLayout({
             style_class: 'panel-status-indicators-box',
             x_align: Clutter.ActorAlign.CENTER,
@@ -25,7 +25,7 @@ export default class SimpleCpuNetExtension extends Extension {
 
         this._cpuDrawingArea = new St.DrawingArea({
             width: 48,
-            height: 32,
+            height: 48,
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._cpuDrawingArea.connect('repaint', (area) => this._drawCpuGraph(area));
@@ -39,14 +39,29 @@ export default class SimpleCpuNetExtension extends Extension {
 
         this._netDrawingArea = new St.DrawingArea({
             width: 48,
-            height: 32,
+            height: 48,
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._netDrawingArea.connect('repaint', (area) => this._drawNetGraph(area));
 
+        // --- File System IO State & Setup ---
+        this._prevReadBytes = 0;
+        this._prevWriteBytes = 0;
+        this._prevIoTime = 0;
+        this._readDataPoints = new Array(10).fill(0);
+        this._writeDataPoints = new Array(10).fill(0);
+
+        this._filesDrawingArea = new St.DrawingArea({
+            width: 48,
+            height: 48,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._filesDrawingArea.connect('repaint', (area) => this._drawFilesGraph(area));
+
         // Add drawing areas to box and indicator
         this._box.add_child(this._cpuDrawingArea);
         this._box.add_child(this._netDrawingArea);
+        this._box.add_child(this._filesDrawingArea);
         this._indicator.add_child(this._box);
 
         Main.panel.addToStatusArea(this.uuid, this._indicator);
@@ -54,11 +69,13 @@ export default class SimpleCpuNetExtension extends Extension {
         // Prime initial readings
         this._updateCpuUsage();
         this._updateNetUsage();
+        this._updateIoUsage();
 
-        // 1-second polling timer
-        this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
+        // polling timer
+        this._timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
             this._updateCpuUsage();
             this._updateNetUsage();
+            this._updateIoUsage();
             return GLib.SOURCE_CONTINUE;
         });
     }
@@ -68,24 +85,11 @@ export default class SimpleCpuNetExtension extends Extension {
         const cr = area.get_context();
         const [width, height] = area.get_surface_size();
 
-        // Background
         cr.setSourceRGB(0.13, 0.28, 0.38);
         cr.rectangle(0, 0, width, height);
         cr.fill();
 
-        // Text "cpu"
-        cr.save();
-        const layout = PangoCairo.create_layout(cr);
-        layout.set_text('cpu', -1);
-        const fontDesc = Pango.FontDescription.from_string('Sans 12');
-        layout.set_font_description(fontDesc);
-        cr.setSourceRGBA(1.0, 1.0, 1.0, 0.4);
-        cr.translate(3, -2);
-        cr.scale(1.0, 0.85);
-        PangoCairo.show_layout(cr, layout);
-        cr.restore();
-
-        // Line Graph
+        this._drawTextLabel(cr, 'cpu');
         this._drawLinePath(cr, this._cpuDataPoints, [0.35, 0.65, 1.0], width, height, 100);
 
         cr.$dispose();
@@ -96,15 +100,46 @@ export default class SimpleCpuNetExtension extends Extension {
         const cr = area.get_context();
         const [width, height] = area.get_surface_size();
 
-        // Background
         cr.setSourceRGB(0.13, 0.28, 0.38);
         cr.rectangle(0, 0, width, height);
         cr.fill();
 
-        // Text "net"
+        this._drawTextLabel(cr, 'net');
+
+        const maxY = 3163;
+        // RX Line in Blue
+        this._drawLinePath(cr, this._rxDataPoints, [0.2, 0.6, 1.0], width, height, maxY);
+        // TX Line in Red
+        this._drawLinePath(cr, this._txDataPoints, [1.0, 0.3, 0.3], width, height, maxY);
+
+        cr.$dispose();
+    }
+
+    // --- Files Drawing ---
+    _drawFilesGraph(area) {
+        const cr = area.get_context();
+        const [width, height] = area.get_surface_size();
+
+        cr.setSourceRGB(0.13, 0.28, 0.38);
+        cr.rectangle(0, 0, width, height);
+        cr.fill();
+
+        this._drawTextLabel(cr, 'files');
+
+        const maxY = 3163;
+        // Read Line in Blue
+        this._drawLinePath(cr, this._readDataPoints, [0.2, 0.6, 1.0], width, height, maxY);
+        // Write Line in Red
+        this._drawLinePath(cr, this._writeDataPoints, [1.0, 0.3, 0.3], width, height, maxY);
+
+        cr.$dispose();
+    }
+
+    // Helper to render text header
+    _drawTextLabel(cr, text) {
         cr.save();
         const layout = PangoCairo.create_layout(cr);
-        layout.set_text('net', -1);
+        layout.set_text(text, -1);
         const fontDesc = Pango.FontDescription.from_string('Sans 12');
         layout.set_font_description(fontDesc);
         cr.setSourceRGBA(1.0, 1.0, 1.0, 0.4);
@@ -112,17 +147,6 @@ export default class SimpleCpuNetExtension extends Extension {
         cr.scale(1.0, 0.85);
         PangoCairo.show_layout(cr, layout);
         cr.restore();
-
-        // Maximum transformed y-axis scale
-        const maxY = 1000;
-
-        // Draw RX Line in Blue (0.2, 0.6, 1.0)
-        this._drawLinePath(cr, this._rxDataPoints, [0.2, 0.6, 1.0], width, height, maxY);
-
-        // Draw TX Line in Red (1.0, 0.3, 0.3)
-        this._drawLinePath(cr, this._txDataPoints, [1.0, 0.3, 0.3], width, height, maxY);
-
-        cr.$dispose();
     }
 
     // Common line drawing helper
@@ -131,7 +155,7 @@ export default class SimpleCpuNetExtension extends Extension {
         if (count < 2) return;
 
         cr.setSourceRGB(colorRGB[0], colorRGB[1], colorRGB[2]);
-        cr.setLineWidth(1.5);
+        cr.setLineWidth(1.0);
 
         const stepX = width / (count - 1);
 
@@ -165,7 +189,7 @@ export default class SimpleCpuNetExtension extends Extension {
 
             return { idle, total };
         } catch (e) {
-            console.error(`[SimpleCpuNet] Error reading /proc/stat: ${e}`);
+            console.error(`[SimpleCpuNetFiles] Error reading /proc/stat: ${e}`);
             return null;
         }
     }
@@ -202,7 +226,6 @@ export default class SimpleCpuNetExtension extends Extension {
             let rxBytes = 0;
             let txBytes = 0;
 
-            // Lines 0 and 1 are headers in /proc/net/dev
             for (let i = 2; i < lines.length; i++) {
                 const line = lines[i].trim();
                 if (!line) continue;
@@ -211,26 +234,25 @@ export default class SimpleCpuNetExtension extends Extension {
                 if (colonIdx === -1) continue;
 
                 const iface = line.substring(0, colonIdx).trim();
-                // Ignore loopback interface
                 if (iface === 'lo') continue;
 
                 const parts = line.substring(colonIdx + 1).trim().split(/\s+/).map(Number);
                 if (parts.length >= 9) {
-                    rxBytes += parts[0]; // RX Bytes
-                    txBytes += parts[8]; // TX Bytes
+                    rxBytes += parts[0];
+                    txBytes += parts[8];
                 }
             }
 
             return { rxBytes, txBytes };
         } catch (e) {
-            console.error(`[SimpleCpuNet] Error reading /proc/net/dev: ${e}`);
+            console.error(`[SimpleCpuNetFiles] Error reading /proc/net/dev: ${e}`);
             return null;
         }
     }
 
     _updateNetUsage() {
         const stats = this._getNetStats();
-        const now = GLib.get_monotonic_time(); // microseconds
+        const now = GLib.get_monotonic_time();
 
         if (!stats) return;
 
@@ -238,13 +260,11 @@ export default class SimpleCpuNetExtension extends Extension {
             const deltaTimeSec = (now - this._prevNetTime) / 1000000.0;
 
             if (deltaTimeSec > 0) {
-                // Calculate throughput in bytes per second
                 const rxSpeed = Math.max(0, (stats.rxBytes - this._prevRxBytes) / deltaTimeSec);
                 const txSpeed = Math.max(0, (stats.txBytes - this._prevTxBytes) / deltaTimeSec);
 
-                // Clamp to 10e6 B/s max and take the square root
-                const rxTransformed = Math.sqrt(Math.min(1e6, rxSpeed));
-                const txTransformed = Math.sqrt(Math.min(1e6, txSpeed));
+                const rxTransformed = Math.sqrt(Math.min(10e6, rxSpeed));
+                const txTransformed = Math.sqrt(Math.min(10e6, txSpeed));
 
                 this._rxDataPoints.shift();
                 this._rxDataPoints.push(rxTransformed);
@@ -261,6 +281,75 @@ export default class SimpleCpuNetExtension extends Extension {
         this._prevNetTime = now;
     }
 
+    // --- File System IO Data Processing ---
+    _getIoStats() {
+        try {
+            const [success, contents] = GLib.file_get_contents('/proc/diskstats');
+            if (!success) return null;
+
+            const text = new TextDecoder().decode(contents);
+            const lines = text.split('\n');
+
+            let readBytes = 0;
+            let writeBytes = 0;
+
+            // Target main physical/virtual block devices (e.g., sda, nvme0n1, vda, mmcblk0)
+            const mainDeviceRegex = /^(sd[a-z]|nvme\d+n\d+|vd[a-z]|mmcblk\d+)$/;
+
+            for (const line of lines) {
+                const parts = line.trim().split(/\s+/);
+                if (parts.length < 14) continue;
+
+                const devName = parts[2];
+                if (mainDeviceRegex.test(devName)) {
+                    const sectorsRead = Number(parts[5]);
+                    const sectorsWritten = Number(parts[9]);
+
+                    // Standard Linux sector size is 512 bytes
+                    readBytes += sectorsRead * 512;
+                    writeBytes += sectorsWritten * 512;
+                }
+            }
+
+            return { readBytes, writeBytes };
+        } catch (e) {
+            console.error(`[SimpleCpuNetFiles] Error reading /proc/diskstats: ${e}`);
+            return null;
+        }
+    }
+
+    _updateIoUsage() {
+        const stats = this._getIoStats();
+        const now = GLib.get_monotonic_time();
+
+        if (!stats) return;
+
+        if (this._prevIoTime !== 0) {
+            const deltaTimeSec = (now - this._prevIoTime) / 1000000.0;
+
+            if (deltaTimeSec > 0) {
+                const readSpeed = Math.max(0, (stats.readBytes - this._prevReadBytes) / deltaTimeSec);
+                const writeSpeed = Math.max(0, (stats.writeBytes - this._prevWriteBytes) / deltaTimeSec);
+
+                // Clamp to 10 MB/s (10e6 B/s) max, square root transform, plot against 3163 max Y
+                const readTransformed = Math.sqrt(Math.min(10e6, readSpeed));
+                const writeTransformed = Math.sqrt(Math.min(10e6, writeSpeed));
+
+                this._readDataPoints.shift();
+                this._readDataPoints.push(readTransformed);
+
+                this._writeDataPoints.shift();
+                this._writeDataPoints.push(writeTransformed);
+
+                this._filesDrawingArea.queue_repaint();
+            }
+        }
+
+        this._prevReadBytes = stats.readBytes;
+        this._prevWriteBytes = stats.writeBytes;
+        this._prevIoTime = now;
+    }
+
     disable() {
         if (this._timeoutId) {
             GLib.Source.remove(this._timeoutId);
@@ -274,6 +363,7 @@ export default class SimpleCpuNetExtension extends Extension {
 
         this._cpuDrawingArea = null;
         this._netDrawingArea = null;
+        this._filesDrawingArea = null;
         this._box = null;
     }
 }
